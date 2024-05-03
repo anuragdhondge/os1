@@ -1,0 +1,122 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <string.h>
+#include <sys/wait.h>
+
+#define FIFO1 "fifo1"
+#define FIFO2 "fifo2"
+#define MAX_BUF 1024
+
+// Function to count characters, words, and lines in a string
+void count_chars_words_lines(char *str, int *chars, int *words, int *lines) {
+    *chars = *words = *lines = 0;
+    int i = 0;
+
+    while (str[i] != '\0') {
+        // Count characters
+        if (str[i] != ' ' && str[i] != '\t' && str[i] != '\n') {
+            (*chars)++;
+        }
+        // Count words
+        if ((str[i] == ' ' || str[i] == '\t') &&
+            (str[i - 1] != ' ' && str[i - 1] != '\t' && str[i - 1] != '\n')) {
+            (*words)++;
+        }
+        // Count lines
+        if (str[i] == '\n') {
+            (*lines)++;
+        }
+        i++;
+    }
+
+    // If the last character is not a newline, increment lines count
+    if (str[i - 1] != '\n') {
+        (*lines)++;
+    }
+}
+
+int main() {
+    int fd1, fd2;
+    char buf[MAX_BUF];
+    char filename[] = "output.txt";
+    int chars, words, lines;
+
+    // Create FIFOs
+    mkfifo(FIFO1, 0666);
+    mkfifo(FIFO2, 0666);
+
+    pid_t pid = fork();
+
+    if (pid == -1) {
+        perror("fork");
+        exit(EXIT_FAILURE);
+    }
+
+    if (pid == 0) { // Child process (Process 2)
+        // Open FIFOs for reading and writing
+        fd1 = open(FIFO1, O_RDONLY);
+        fd2 = open(FIFO2, O_WRONLY);
+
+        // Read sentences from FIFO1
+        read(fd1, buf, MAX_BUF);
+
+        // Count characters, words, and lines
+        count_chars_words_lines(buf, &chars, &words, &lines);
+
+        // Write counts to a file
+        FILE *file = fopen(filename, "w");
+        fprintf(file, "Character count: %d\n", chars);
+        fprintf(file, "Word count: %d\n", words);
+        fprintf(file, "Line count: %d\n", lines);
+        fclose(file);
+
+        // Write contents of the file to FIFO2
+        file = fopen(filename, "r");
+        while (fgets(buf, MAX_BUF, file) != NULL) {
+            write(fd2, buf, strlen(buf) + 1);
+        }
+        fclose(file);
+
+        // Close FIFOs
+        close(fd1);
+        close(fd2);
+
+        // Remove FIFOs
+        unlink(FIFO1);
+        unlink(FIFO2);
+
+        exit(EXIT_SUCCESS);
+    } else { // Parent process (Process 1)
+        // Open FIFOs for writing and reading
+        fd1 = open(FIFO1, O_WRONLY);
+        fd2 = open(FIFO2, O_RDONLY);
+
+        // Accept sentences from user and write them to FIFO1
+        printf("Enter sentences (type 'exit' to end):\n");
+        while (1) {
+            fgets(buf, MAX_BUF, stdin);
+            if (strncmp(buf, "exit", 4) == 0) {
+                break;
+            }
+            write(fd1, buf, strlen(buf) + 1);
+        }
+
+        // Read contents from FIFO2 and display on standard output
+        while (read(fd2, buf, MAX_BUF) > 0) {
+            printf("%s", buf);
+        }
+
+        // Close FIFOs
+        close(fd1);
+        close(fd2);
+
+        // Wait for the child process to complete
+        wait(NULL);
+    }
+
+    return 0;
+}
